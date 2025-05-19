@@ -1,4 +1,6 @@
 #FINAL CODE
+from fastapi import FastAPI
+app = FastAPI()
 
 import dash
 from dash import html, dcc, dash_table, Input, Output, State
