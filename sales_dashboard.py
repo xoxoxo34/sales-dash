@@ -1,4 +1,10 @@
 #FINAL CODE
+pip install dash
+pip install dash-bootstrap-components
+pip install pandas
+pip install numpy
+pip install plotly
+pip install reportlab
 
 import dash
 from dash import html, dcc, dash_table, Input, Output, State
