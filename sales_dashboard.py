@@ -1,4 +1,3 @@
-#FINAL CODE
 import dash
 from dash import html, dcc, dash_table, Input, Output, State
 import dash_bootstrap_components as dbc
@@ -14,80 +13,54 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.utils import ImageReader
 
-# --- Begin clustering analysis (precompute at startup) ---
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score, davies_bouldin_score, calinski_harabasz_score
 
-# Load dataset
-df = pd.read_csv('web_logs_data1.csv')
-
-# Aggregate core metrics per country
-country_stats = df.groupby('Country').agg({
-    'Revenue': 'sum',
-    'Demo Requests': 'sum',
-    'Salesperson': 'nunique'
-}).reset_index()
-country_stats.rename(columns={'Salesperson': 'Unique_Salespersons'}, inplace=True)
-
-# Add average revenue per salesperson
-rep_performance = df.groupby(['Country', 'Salesperson'])['Revenue'].sum().reset_index()
-avg_rev_per_salesperson = rep_performance.groupby('Country')['Revenue'].mean().reset_index()
-avg_rev_per_salesperson.rename(columns={'Revenue': 'Avg_Rev_per_Salesperson'}, inplace=True)
-
-# Merge into one dataframe
-merged_df = pd.merge(country_stats, avg_rev_per_salesperson, on='Country')
-
-# Scale features
-features = ['Revenue', 'Demo Requests', 'Unique_Salespersons', 'Avg_Rev_per_Salesperson']
-scaler = StandardScaler()
-scaled_features = scaler.fit_transform(merged_df[features])
-
-# Fit KMeans
-kmeans = KMeans(n_clusters=3, random_state=42)
-merged_df['Cluster'] = kmeans.fit_predict(scaled_features)
-
-# Optional: Evaluate clustering
-silhouette = silhouette_score(scaled_features, merged_df['Cluster'])
-db_score = davies_bouldin_score(scaled_features, merged_df['Cluster'])
-ch_score = calinski_harabasz_score(scaled_features, merged_df['Cluster'])
-print(f"Silhouette Score: {silhouette:.2f}")
-print(f"Davies-Bouldin Index: {db_score:.2f}")
-print(f"Calinski-Harabasz Index: {ch_score:.2f}")
-
-# Create Plotly scatter plot for clusters
-cluster_fig = px.scatter(
-    merged_df,
-    x='Revenue',
-    y='Demo Requests',
-    color='Cluster',
-    hover_name='Country',
-    title='Clustering of Countries Based on Sales & Demo Insights',
-    labels={'Revenue': 'Total Revenue', 'Demo Requests': 'Total Demo Requests'}
-)
-
-# --- End clustering analysis ---
-
-# Load your dataset
+# --- Load data ---
 df_full = pd.read_csv('web_logs_data1.csv')
 
-# Parse Timestamp if exists
+# Parse DateTime if available
 if "Timestamp" in df_full.columns:
     df_full["Timestamp"] = pd.to_datetime(df_full["Timestamp"], errors='coerce')
-    df_full["Date"] = df_full["Timestamp"].dt.date
+    df_full["Date"] = pd.to_datetime(df_full["Timestamp"], errors='coerce').dt.date
+else:
+    df_full["Date"] = pd.to_datetime(df_full["Date"], errors='coerce')
 
-# Initialize app
+# --- Prepare clustering data ---
+def prepare_clustering_data(df):
+    try:
+        country_stats = df.groupby('Country').agg({
+            'Revenue': 'sum',
+            'Demo Requests': 'sum',
+            'Salesperson': 'nunique'
+        }).reset_index()
+        country_stats.rename(columns={'Salesperson': 'Unique_Salespersons'}, inplace=True)
+
+        rep_performance = df.groupby(['Country', 'Salesperson'])['Revenue'].sum().reset_index()
+        avg_rev_per_salesperson = rep_performance.groupby('Country')['Revenue'].mean().reset_index()
+        avg_rev_per_salesperson.rename(columns={'Revenue': 'Avg_Rev_per_Salesperson'}, inplace=True)
+
+        merged_df = pd.merge(country_stats, avg_rev_per_salesperson, on='Country')
+        features = ['Revenue', 'Demo Requests', 'Unique_Salespersons', 'Avg_Rev_per_Salesperson']
+        scaler = StandardScaler()
+        scaled_features = scaler.fit_transform(merged_df[features])
+        return merged_df, scaled_features
+    except Exception as e:
+        return pd.DataFrame(), np.array([])
+
+# --- Initialize Dash app ---
 app = dash.Dash(__name__, external_stylesheets=[
     dbc.themes.BOOTSTRAP,
     "https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css"
 ])
 app.title = "Sales Dashboard"
 
-# --- Define the layout ---
+# --- Layout ---
 app.layout = dbc.Container([
     dcc.Location(id='url', refresh=False),
     dbc.Row([
-        # Sidebar with nav
+        # Sidebar
         dbc.Col([
             html.Div([
                 html.H5("Sales Dashboard", className="text-white mb-4"),
@@ -125,7 +98,6 @@ app.layout = dbc.Container([
         ], width=3),
         # Main content
         dbc.Col([
-            # Date range filter and stats
             dbc.Row([
                 dbc.Col([
                     html.Label("Select Date Range"),
@@ -141,7 +113,7 @@ app.layout = dbc.Container([
                     html.Div(id='total-sales', style={'fontSize': '20px', 'marginTop': '10px'})
                 ], width=8)
             ], style={'marginBottom': '20px'}),
-            # Tab content
+            # Tab content area
             html.Div(id='tab-content', style={
                 'padding': '20px',
                 'background-color': '#f4f6f9',
@@ -152,8 +124,9 @@ app.layout = dbc.Container([
     ])
 ], fluid=True)
 
+# --- Callbacks ---
 
-# --- Highlight active tab ---
+# Update active link styling
 @app.callback(
     [Output('visualization-overview-tab', 'className'),
      Output('data-overview-tab', 'className'),
@@ -173,8 +146,7 @@ def update_active_links(pathname):
         "nav-link" + (" active" if pathname == "/cluster-analysis" else "")
     ]
 
-
-# --- Update total revenue and sales based on date filter ---
+# Update totals based on date range
 @app.callback(
     [Output('total-revenue', 'children'),
      Output('total-sales', 'children')],
@@ -198,8 +170,7 @@ def update_totals(start_date, end_date):
         f"Total Sales: {total_sales_count}"
     ]
 
-
-# --- Render page content based on URL ---
+# Render tab content based on URL and filters
 @app.callback(
     Output('tab-content', 'children'),
     [Input('url', 'pathname'),
@@ -207,7 +178,6 @@ def update_totals(start_date, end_date):
      Input('date-range', 'end_date')]
 )
 def render_tab_content(pathname, start_date, end_date):
-    # Filter data
     filtered_df = df_full.copy()
     if "Timestamp" in df_full.columns:
         filtered_df = filtered_df[
@@ -218,24 +188,24 @@ def render_tab_content(pathname, start_date, end_date):
             (filtered_df['Date'] >= start_date) & (filtered_df['Date'] <= end_date)
         ]
 
+    # --- Overview Page ---
     if pathname == "/visualization-overview" or pathname == "/":
-        # Dashboard overview with charts
-        # 1. Sales by Salesperson
+        region_sales = filtered_df.groupby("Country")["Revenue"].sum().reset_index()
+        fig_sales_by_region = px.bar(region_sales, x='Country', y='Revenue', title='Sales by Region')
         sp_sales = filtered_df.groupby("Salesperson")["Revenue"].sum().reset_index()
-        fig_salesperson = px.bar(sp_sales, x="Salesperson", y="Revenue", title="Sales by Salesperson")
+        fig_salesperson = px.bar(sp_sales, x='Salesperson', y='Revenue', title='Sales by Salesperson')
         fig_salesperson.add_trace(go.Scatter(
-            x=sp_sales["Salesperson"],
+            x=sp_sales['Salesperson'],
             y=[50_000_000]*len(sp_sales),
             mode='lines',
             name='Target',
             line=dict(color='red', width=1)
         ))
 
-        # 2. Total Sales Over Time
         total_sales_time = filtered_df.groupby("Date")["Revenue"].sum().reset_index()
-        fig_total_sales = px.line(total_sales_time, x="Date", y="Revenue", title="Total Sales Over Time")
-        # Generate dummy actual, target, expenditure series
-        dates = pd.to_datetime(total_sales_time["Date"])
+        fig_total_sales = px.line(total_sales_time, x='Date', y='Revenue', title='Total Sales Over Time')
+        # Dummy target and expenditure series
+        dates = pd.to_datetime(total_sales_time['Date'])
         np.random.seed(42)
         n_points = len(dates)
         target_bases = np.random.uniform(1e6, 2.5e6, n_points)
@@ -244,24 +214,16 @@ def render_tab_content(pathname, start_date, end_date):
         expenditure_bases = np.random.uniform(5e5, 2e6, n_points)
         expenditure_fluct = expenditure_bases * 0.05
         expenditure_series = expenditure_bases + np.random.normal(0, expenditure_fluct)
-        fig_total_sales.add_trace(go.Scatter(x=dates, y=total_sales_time["Revenue"], mode='lines', name='Actual'))
+        fig_total_sales.add_trace(go.Scatter(x=dates, y=total_sales_time['Revenue'], mode='lines', name='Actual'))
         fig_total_sales.add_trace(go.Scatter(x=dates, y=target_series, mode='lines', name='Target'))
         fig_total_sales.add_trace(go.Scatter(x=dates, y=expenditure_series, mode='lines', name='Expenditure'))
 
-        # 3. Top Selling Products
         top_products = filtered_df.groupby("Product")["Revenue"].sum().reset_index().sort_values(by="Revenue", ascending=False)
+        fig_top_products = px.bar(top_products, x='Product', y='Revenue', title='Top Selling Products')
         np.random.seed(42)
         target_series_products = np.random.uniform(3e7, 5e7, size=len(top_products))
         target_series_products_fluct = target_series_products * 0.05
         target_series_products = target_series_products + np.random.normal(0, target_series_products_fluct)
-        fig_top_products = px.bar(top_products, x="Product", y="Revenue", title="Top Selling Products")
-        fig_top_products.add_trace(go.Scatter(
-            x=top_products["Product"],
-            y=target_series_products,
-            mode='lines',
-            name='Targets',
-            line=dict(color='red', width=2)
-        ))
 
         return html.Div([
             html.H3("Sales Manager Overview"),
@@ -272,6 +234,7 @@ def render_tab_content(pathname, start_date, end_date):
             ], className="g-0")
         ])
 
+    # --- Data Page ---
     elif pathname == "/data":
         return html.Div([
             html.H4("Data Overview", className="mb-3 text-primary"),
@@ -289,8 +252,8 @@ def render_tab_content(pathname, start_date, end_date):
             )
         ])
 
+    # --- Sales Performance ---
     elif pathname == "/sales-performance":
-        # Sales by Salesperson
         sp_sales = filtered_df.groupby("Salesperson")["Revenue"].sum().reset_index()
         fig_sales = px.bar(sp_sales, x="Salesperson", y="Revenue", title="Sales by Salesperson")
         fig_sales.add_trace(go.Scatter(
@@ -301,17 +264,21 @@ def render_tab_content(pathname, start_date, end_date):
             line=dict(color='red', width=1)
         ))
 
-        # Sales by Channel pie
         fig_channel = px.pie(filtered_df, names="Sales Channel", values="Revenue", title="Sales by Channel")
+        region_sales = filtered_df.groupby("Country")["Revenue"].sum().reset_index()
+        fig_sales_by_region = px.bar(region_sales, x='Country', y='Revenue', title='Sales by Region')
+
         return dbc.Container([
             html.H4("Sales Representatives", className="text-primary mb-4"),
             html.Div(f"Total Sales: ${filtered_df['Revenue'].sum():,.2f}", className="mb-3"),
             dbc.Row([
-                dbc.Col(dcc.Graph(figure=fig_sales), md=6),
-                dbc.Col(dcc.Graph(figure=fig_channel), md=6),
-            ])
+                dbc.Col(dcc.Graph(figure=fig_sales), width=4),
+                dbc.Col(dcc.Graph(figure=fig_channel), width=4),
+                dbc.Col(dcc.Graph(figure=fig_sales_by_region), width=4),
+            ], className="g-0")
         ])
 
+    # --- Performance Analyst ---
     elif pathname == "/team-performance":
         total_sales = filtered_df["Revenue"].sum()
         store_perf = px.bar(filtered_df.groupby("Retail Store")["Revenue"].sum().reset_index(), x="Retail Store", y="Revenue", title="Retail Store Performance")
@@ -333,16 +300,15 @@ def render_tab_content(pathname, start_date, end_date):
             ])
         ])
 
+    # --- Product Insights ---
     elif pathname == "/product-insights":
         total_sales = filtered_df["Revenue"].sum()
         top_products = filtered_df.groupby("Product")["Revenue"].sum().reset_index().sort_values(by="Revenue", ascending=False)
-        # Generate target data
         np.random.seed(42)
         target_series_products = np.random.uniform(3e7, 5e7, size=len(top_products))
         target_series_products_fluct = target_series_products * 0.05
-        target_series_products = target_series_products + np.random.normal(0, target_series_products_fluct)
+        target_series_products += np.random.normal(0, target_series_products_fluct)
 
-        # Over time data
         dates = pd.to_datetime(filtered_df.groupby("Date")["Revenue"].sum().reset_index()["Date"])
         n_points = len(dates)
         target_bases = np.random.uniform(1e6, 2.5e6, n_points)
@@ -358,7 +324,6 @@ def render_tab_content(pathname, start_date, end_date):
         fig_total_sales_time.add_trace(go.Scatter(x=dates, y=target_series_time, mode='lines', name='Target'))
         fig_total_sales_time.add_trace(go.Scatter(x=dates, y=expenditure_series, mode='lines', name='Expenditure'))
 
-        # Top Products with target line
         fig_top_products = px.bar(top_products, x="Product", y="Revenue", title="Top Selling Products")
         fig_top_products.add_trace(go.Scatter(
             x=top_products["Product"],
@@ -377,16 +342,98 @@ def render_tab_content(pathname, start_date, end_date):
             ])
         ])
 
+    # --- Cluster Analysis ---
     elif pathname == "/cluster-analysis":
-        # Show the cluster plot
+        try:
+            # Prepare data
+            merge_df, scaled_features = prepare_clustering_data(filtered_df)
+
+            n_clusters = 3
+
+            # Clustering
+            try:
+                kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+                labels = kmeans.fit_predict(scaled_features)
+                scores = {
+                    "Silhouette": silhouette_score(scaled_features, labels),
+                    "Davies-Bouldin": davies_bouldin_score(scaled_features, labels),
+                    "Calinski-Harabasz": calinski_harabasz_score(scaled_features, labels)
+                }
+                # Assign cluster labels for visualization
+                merge_df['Cluster'] = labels.astype(str)
+                # Plot clusters in 2D (using first two features)
+                fig_scatter = px.scatter(
+                    merge_df, x=scaled_features[:,0], y=scaled_features[:,1],
+                    color='Cluster',
+                    title='Cluster Scatter Plot'
+                )
+            except Exception as e:
+                scores = {
+                    "Error": f"Clustering failed: {str(e)}"
+                }
+                fig_scatter = go.Figure()
+                fig_scatter.update_layout(title="Clustering failed")
+        except Exception as e:
+            scores = {
+                "Error": f"Data preparation failed: {str(e)}"
+            }
+            fig_scatter = go.Figure()
+            fig_scatter.update_layout(title="Data preparation failed")
+
+        # Define cluster meanings
+        cluster_meanings = {
+            '0': 'Country-based sales clusters',
+            '1': 'Demo request trend',
+            '2': 'Salesperson performance'
+        }
+
+        def generate_score_html(scores):
+            if "Error" in scores:
+                return html.P(scores["Error"], style={'color': 'red'})
+            # Format scores horizontally
+            return html.Div([
+                html.Span(f"Silhouette Score: {scores['Silhouette']:.2f}  "),
+                html.Span(f"Davies-Bouldin Index: {scores['Davies-Bouldin']:.2f}  "),
+                html.Span(f"Calinski-Harabasz Score: {scores['Calinski-Harabasz']:.2f}")
+            ], style={'fontSize': '14px', 'color': '#333', 'whiteSpace': 'nowrap'})
+
+        # Add annotation inside the plot for cluster key
+        cluster_key_text = (
+            "0 : Country-based sales clusters  "
+            "1 : Demo request trend  "
+            "2 : Salesperson performance"
+        )
+        # Update layout to include cluster key as annotation
+        fig_scatter.update_layout(
+            annotations=[
+                dict(
+                    text=cluster_key_text,
+                    x=0.5,
+                    y=-0.2,
+                    xref='paper',
+                    yref='paper',
+                    showarrow=False,
+                    align='left',
+                    font=dict(size=10),
+                    bgcolor='white',
+                    bordercolor='black',
+                    borderwidth=1,
+                    opacity=0.8
+                )
+            ],
+            margin=dict(b=100)  # increase bottom margin for annotation
+        )
+
         return html.Div([
-            html.H3("Cluster Analysis of Countries"),
-            dcc.Graph(figure=cluster_fig)
+            # Chart and performance scores
+            html.Div([
+                dcc.Graph(figure=fig_scatter),
+                html.H6("Clustering Performance Scores"),
+                generate_score_html(scores)
+            ], style={'display': 'flex', 'flexDirection': 'column', 'alignItems': 'center'})
         ])
-
-    else:
-        return html.H3("Page not found")
-
+    # Default fallback
+    return html.H3("Page not found or no data.")
 
 # --- Search callback ---
 @app.callback(
@@ -401,6 +448,7 @@ def filter_table(n_clicks, search_value, search_column):
     filtered = df_full[df_full[search_column].astype(str).str.lower().str.contains(search_value.lower())]
     return filtered.to_dict('records') if not filtered.empty else []
 
+# --- Reset search on URL change ---
 @app.callback(
     Output('search-input', 'value'),
     [Input('url', 'pathname')],
@@ -409,8 +457,7 @@ def filter_table(n_clicks, search_value, search_column):
 def reset_search(n):
     return ""
 
-
-# --- Generate PDF ---
+# --- PDF download ---
 from dash.exceptions import PreventUpdate
 @app.callback(
     Output("download-pdf", "data"),
@@ -480,6 +527,6 @@ def generate_pdf(n_clicks):
 
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    # Don't run in debug mode
+    app.run(host='0.0.0.0', port=8051, debug=False)
 
