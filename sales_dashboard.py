@@ -5,29 +5,25 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-import base64
 import io
-import tempfile
 import os
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import letter
-from reportlab.lib.utils import ImageReader
+import tempfile
 
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score, davies_bouldin_score, calinski_harabasz_score
 
-# --- Load data ---
+# Load your dataset
 df_full = pd.read_csv('web_logs_data1.csv')
 
-# Parse DateTime if available
+# Parse dates
 if "Timestamp" in df_full.columns:
     df_full["Timestamp"] = pd.to_datetime(df_full["Timestamp"], errors='coerce')
     df_full["Date"] = pd.to_datetime(df_full["Timestamp"], errors='coerce').dt.date
 else:
     df_full["Date"] = pd.to_datetime(df_full["Date"], errors='coerce')
 
-# --- Prepare clustering data ---
+# Prepare clustering data function
 def prepare_clustering_data(df):
     try:
         country_stats = df.groupby('Country').agg({
@@ -37,26 +33,29 @@ def prepare_clustering_data(df):
         }).reset_index()
         country_stats.rename(columns={'Salesperson': 'Unique_Salespersons'}, inplace=True)
 
-        rep_performance = df.groupby(['Country', 'Salesperson'])['Revenue'].sum().reset_index()
-        avg_rev_per_salesperson = rep_performance.groupby('Country')['Revenue'].mean().reset_index()
-        avg_rev_per_salesperson.rename(columns={'Revenue': 'Avg_Rev_per_Salesperson'}, inplace=True)
+        rep_perf = df.groupby(['Country', 'Salesperson'])['Revenue'].sum().reset_index()
+        avg_rev = rep_perf.groupby('Country')['Revenue'].mean().reset_index()
+        avg_rev.rename(columns={'Revenue': 'Avg_Rev_per_Salesperson'}, inplace=True)
 
-        merged_df = pd.merge(country_stats, avg_rev_per_salesperson, on='Country')
+        merged_df = pd.merge(country_stats, avg_rev, on='Country')
         features = ['Revenue', 'Demo Requests', 'Unique_Salespersons', 'Avg_Rev_per_Salesperson']
         scaler = StandardScaler()
         scaled_features = scaler.fit_transform(merged_df[features])
         return merged_df, scaled_features
-    except Exception as e:
+    except:
         return pd.DataFrame(), np.array([])
 
-# --- Initialize Dash app ---
-app = dash.Dash(__name__, external_stylesheets=[
-    dbc.themes.BOOTSTRAP,
-    "https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css"
-])
+# Initialize Dash app with suppress_callback_exceptions=True
+app = dash.Dash(__name__, 
+                external_stylesheets=[
+                    dbc.themes.BOOTSTRAP,
+                    "https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css"
+                ],
+                suppress_callback_exceptions=True)
 app.title = "Sales Dashboard"
+server = app.server
 
-# --- Layout ---
+# Layout
 app.layout = dbc.Container([
     dcc.Location(id='url', refresh=False),
     dbc.Row([
@@ -113,7 +112,7 @@ app.layout = dbc.Container([
                     html.Div(id='total-sales', style={'fontSize': '20px', 'marginTop': '10px'})
                 ], width=8)
             ], style={'marginBottom': '20px'}),
-            # Tab content area
+            # Tab content
             html.Div(id='tab-content', style={
                 'padding': '20px',
                 'background-color': '#f4f6f9',
@@ -124,9 +123,7 @@ app.layout = dbc.Container([
     ])
 ], fluid=True)
 
-# --- Callbacks ---
-
-# Update active link styling
+# Callbacks
 @app.callback(
     [Output('visualization-overview-tab', 'className'),
      Output('data-overview-tab', 'className'),
@@ -146,7 +143,6 @@ def update_active_links(pathname):
         "nav-link" + (" active" if pathname == "/cluster-analysis" else "")
     ]
 
-# Update totals based on date range
 @app.callback(
     [Output('total-revenue', 'children'),
      Output('total-sales', 'children')],
@@ -154,23 +150,18 @@ def update_active_links(pathname):
      Input('date-range', 'end_date')]
 )
 def update_totals(start_date, end_date):
-    filtered_df = df_full.copy()
-    if "Timestamp" in df_full.columns:
-        filtered_df = filtered_df[
-            (filtered_df['Timestamp'] >= start_date) & (filtered_df['Timestamp'] <= end_date)
-        ]
+    df = df_full.copy()
+    if "Timestamp" in df.columns:
+        df = df[(df['Timestamp'] >= start_date) & (df['Timestamp'] <= end_date)]
     else:
-        filtered_df = filtered_df[
-            (filtered_df['Date'] >= start_date) & (filtered_df['Date'] <= end_date)
-        ]
-    total_rev = filtered_df['Revenue'].sum() if 'Revenue' in filtered_df.columns else 0
-    total_sales_count = len(filtered_df)
+        df = df[(df['Date'] >= start_date) & (df['Date'] <= end_date)]
+    total_rev = df['Revenue'].sum() if 'Revenue' in df.columns else 0
+    total_sales = len(df)
     return [
         f"Total Revenue: ${total_rev:,.2f}",
-        f"Total Sales: {total_sales_count}"
+        f"Total Sales: {total_sales}"
     ]
 
-# Render tab content based on URL and filters
 @app.callback(
     Output('tab-content', 'children'),
     [Input('url', 'pathname'),
@@ -178,52 +169,78 @@ def update_totals(start_date, end_date):
      Input('date-range', 'end_date')]
 )
 def render_tab_content(pathname, start_date, end_date):
-    filtered_df = df_full.copy()
-    if "Timestamp" in df_full.columns:
-        filtered_df = filtered_df[
-            (filtered_df['Timestamp'] >= start_date) & (filtered_df['Timestamp'] <= end_date)
-        ]
+    df = df_full.copy()
+    if "Timestamp" in df.columns:
+        df = df[(df['Timestamp'] >= start_date) & (df['Timestamp'] <= end_date)]
     else:
-        filtered_df = filtered_df[
-            (filtered_df['Date'] >= start_date) & (filtered_df['Date'] <= end_date)
-        ]
+        df = df[(df['Date'] >= start_date) & (df['Date'] <= end_date)]
 
-    # --- Overview Page ---
+    # Overview Page
     if pathname == "/visualization-overview" or pathname == "/":
-        region_sales = filtered_df.groupby("Country")["Revenue"].sum().reset_index()
-        fig_sales_by_region = px.bar(region_sales, x='Country', y='Revenue', title='Sales by Region')
-        sp_sales = filtered_df.groupby("Salesperson")["Revenue"].sum().reset_index()
-        fig_salesperson = px.bar(sp_sales, x='Salesperson', y='Revenue', title='Sales by Salesperson')
-        fig_salesperson.add_trace(go.Scatter(
-            x=sp_sales['Salesperson'],
-            y=[50_000_000]*len(sp_sales),
-            mode='lines',
-            name='Target',
-            line=dict(color='red', width=1)
-        ))
+        # Example: Sales by Region
+        if not df.empty and "Country" in df.columns:
+            region_sales = df.groupby("Country")["Sales"].sum().reset_index()
+            fig_sales_by_region = px.bar(region_sales, x='Country', y='Sales', title='Sales by Region')
+        else:
+            fig_sales_by_region = px.bar()
 
-        total_sales_time = filtered_df.groupby("Date")["Revenue"].sum().reset_index()
-        fig_total_sales = px.line(total_sales_time, x='Date', y='Revenue', title='Total Sales Over Time')
-        # Dummy target and expenditure series
-        dates = pd.to_datetime(total_sales_time['Date'])
-        np.random.seed(42)
-        n_points = len(dates)
-        target_bases = np.random.uniform(1e6, 2.5e6, n_points)
-        target_fluct = target_bases * 0.05
-        target_series = target_bases + np.random.normal(0, target_fluct)
-        expenditure_bases = np.random.uniform(5e5, 2e6, n_points)
-        expenditure_fluct = expenditure_bases * 0.05
-        expenditure_series = expenditure_bases + np.random.normal(0, expenditure_fluct)
-        fig_total_sales.add_trace(go.Scatter(x=dates, y=total_sales_time['Revenue'], mode='lines', name='Actual'))
-        fig_total_sales.add_trace(go.Scatter(x=dates, y=target_series, mode='lines', name='Target'))
-        fig_total_sales.add_trace(go.Scatter(x=dates, y=expenditure_series, mode='lines', name='Expenditure'))
+        # Example: Sales by Salesperson
+        if not df.empty and "Salesperson" in df.columns:
+            sp_sales = df.groupby("Salesperson")["Sales"].sum().reset_index()
+            fig_salesperson = px.bar(sp_sales, x='Salesperson', y='Sales', title='Sales by Salesperson')
+            fig_salesperson.add_trace(go.Scatter(
+                x=sp_sales['Salesperson'], y=[1e6]*len(sp_sales),
+                mode='lines', name='Target', line=dict(color='red', width=1)
+            ))
+        else:
+            fig_salesperson = px.bar()
 
-        top_products = filtered_df.groupby("Product")["Revenue"].sum().reset_index().sort_values(by="Revenue", ascending=False)
-        fig_top_products = px.bar(top_products, x='Product', y='Revenue', title='Top Selling Products')
-        np.random.seed(42)
-        target_series_products = np.random.uniform(3e7, 5e7, size=len(top_products))
-        target_series_products_fluct = target_series_products * 0.05
-        target_series_products = target_series_products + np.random.normal(0, target_series_products_fluct)
+        # Total Sales Over Time
+        if not df.empty and "Date" in df.columns:
+            total_sales_time = df.groupby("Date")["Sales"].sum().reset_index()
+            fig_total_sales = px.line(total_sales_time, x='Date', y='Sales', title='Total Sales Over Time')
+
+            # Dummy series for illustration
+            dates = pd.to_datetime(total_sales_time['Date'])
+            np.random.seed(42)
+            n_points = len(dates)
+            target_bases = np.random.uniform(1e4, 4e4, n_points)
+            target_fluct = target_bases * 0.05
+            target_series = target_bases + np.random.normal(0, target_fluct)
+            expenditure_bases = np.random.uniform(2e4, 3e4, n_points)
+            expenditure_fluct = expenditure_bases * 0.05
+            expenditure_series = expenditure_bases + np.random.normal(0, expenditure_fluct)
+
+            fig_total_sales.add_trace(go.Scatter(x=dates, y=total_sales_time['Sales'], mode='lines', name='Actual'))
+            fig_total_sales.add_trace(go.Scatter(x=dates, y=target_series, mode='lines', name='Target'))
+            fig_total_sales.add_trace(go.Scatter(x=dates, y=expenditure_series, mode='lines', name='Expenditure'))
+
+        else:
+            fig_total_sales = px.line()
+
+        # Top products
+        if not df.empty and "Product" in df.columns:
+            top_products = df.groupby("Product")["Sales"].sum().reset_index().sort_values(by="Sales", ascending=False)
+            np.random.seed(42)
+            target_series_products = np.random.uniform(0.5e6, 1e6, size=len(top_products))
+            target_series_products_fluct = target_series_products * 0.05
+            target_series_products += np.random.normal(0, target_series_products_fluct)
+
+            fig_top_products = go.Figure()
+            fig_top_products.add_trace(go.Bar(
+                x=top_products["Product"], y=top_products["Sales"], name='Sales'
+            ))
+            fig_top_products.add_trace(go.Scatter(
+                x=top_products["Product"], y=target_series_products,
+                mode='lines+markers', name='Target',
+                line=dict(color='red', width=2)
+            ))
+            fig_top_products.update_layout(
+                title='Top Selling Products with Target',
+                xaxis_title='Product', yaxis_title='Sales'
+            )
+        else:
+            fig_top_products = go.Figure()
 
         return html.Div([
             html.H3("Sales Manager Overview"),
@@ -234,123 +251,111 @@ def render_tab_content(pathname, start_date, end_date):
             ], className="g-0")
         ])
 
-    # --- Data Page ---
+    # Data page
     elif pathname == "/data":
         return html.Div([
-            html.H4("Data Overview", className="mb-3 text-primary"),
-            html.P("Explore the dataset or see a sample of entries below."),
+            html.H4("Data Overview"),
             dash_table.DataTable(
                 id='data-table',
-                data=df_full.sample(n=6, random_state=42).to_dict('records'),
-                columns=[{"name": i, "id": i} for i in df_full.columns],
+                data=df.sample(6, random_state=42).to_dict('records'),
+                columns=[{"name": c, "id": c} for c in df.columns],
                 page_size=6,
-                style_table={'overflowX': 'auto', 'margin': '0 auto'},
+                style_table={'overflowX': 'auto'},
                 style_header={'backgroundColor': '#1f2c56', 'color': 'white', 'fontWeight': 'bold'},
-                style_cell={'padding': '10px', 'textAlign': 'left', 'minWidth': '100px', 'backgroundColor': 'white', 'border': '1px solid #ccc'},
-                style_data={'border': '1px solid #ccc', 'backgroundColor': '#2c3e50', 'color': 'white'},
-                style_as_list_view=True
+                style_cell={'padding': '10px', 'textAlign': 'left', 'backgroundColor': '#2c3e50', 'color': 'white'}
             )
         ])
 
-    # --- Sales Performance ---
+    # Sales performance
     elif pathname == "/sales-performance":
-        sp_sales = filtered_df.groupby("Salesperson")["Revenue"].sum().reset_index()
-        fig_sales = px.bar(sp_sales, x="Salesperson", y="Revenue", title="Sales by Salesperson")
-        fig_sales.add_trace(go.Scatter(
-            x=sp_sales["Salesperson"],
-            y=[50_000_000]*len(sp_sales),
-            mode='lines',
-            name='Target',
-            line=dict(color='red', width=1)
-        ))
+        if not df.empty and "Salesperson" in df.columns:
+            sp_sales = df.groupby("Salesperson")["Sales"].sum().reset_index()
+            fig_sales = px.bar(sp_sales, x='Salesperson', y='Sales', title='Sales by Salesperson')
+            fig_sales.add_trace(go.Scatter(
+                x=sp_sales['Salesperson'], y=[1e6]*len(sp_sales),
+                mode='lines', name='Target', line=dict(color='red', width=1)
+            ))
+        else:
+            fig_sales = px.bar()
 
-        fig_channel = px.pie(filtered_df, names="Sales Channel", values="Revenue", title="Sales by Channel")
-        region_sales = filtered_df.groupby("Country")["Revenue"].sum().reset_index()
-        fig_sales_by_region = px.bar(region_sales, x='Country', y='Revenue', title='Sales by Region')
+        if not df.empty and "Sales Channel" in df.columns:
+            fig_channel = px.pie(df, names="Sales Channel", values="Sales")
+        else:
+            fig_channel = px.pie()
+
+        if not df.empty and "Country" in df.columns:
+            region_sales = df.groupby("Country")["Sales"].sum().reset_index()
+            fig_region = px.bar(region_sales, x='Country', y='Sales')
+        else:
+            fig_region = px.bar()
 
         return dbc.Container([
-            html.H4("Sales Representatives", className="text-primary mb-4"),
-            html.Div(f"Total Sales: ${filtered_df['Revenue'].sum():,.2f}", className="mb-3"),
+            html.H4("Sales Representatives"),
             dbc.Row([
                 dbc.Col(dcc.Graph(figure=fig_sales), width=4),
                 dbc.Col(dcc.Graph(figure=fig_channel), width=4),
-                dbc.Col(dcc.Graph(figure=fig_sales_by_region), width=4),
-            ], className="g-0")
+                dbc.Col(dcc.Graph(figure=fig_region), width=4),
+            ])
         ])
 
-    # --- Performance Analyst ---
+    # Team Performance
     elif pathname == "/team-performance":
-        total_sales = filtered_df["Revenue"].sum()
-        store_perf = px.bar(filtered_df.groupby("Retail Store")["Revenue"].sum().reset_index(), x="Retail Store", y="Revenue", title="Retail Store Performance")
-        revenue_user = px.histogram(filtered_df.groupby("Customer Name")["Revenue"].sum().reset_index(), x="Revenue", title="Revenue per User")
-        # Dummy conversion indicator
-        conversion = go.Figure(go.Indicator(
-            mode="gauge+number",
-            value=56.56,
-            title={'text': "Conversion Rate (%)"},
-            gauge={'axis': {'range': [0, 100]}, 'bar': {'color': "#17BECF"}}
-        ))
+        store_perf = px.bar(df.groupby("Retail Store")["Sales"].sum().reset_index(), x="Retail Store", y="Sales")
+        revenue_user = px.histogram(df.groupby("Customer Name")["Revenue"].sum().reset_index(), x="Customer Name", y="Revenue")
+        conv = go.Figure(go.Indicator(mode="gauge+number", value=56.56, title={'text':"Conversion Rate (%)"},
+                                    gauge={'axis': {'range':[0,100]}, 'bar': {'color':'#17BECF'}}))
         return html.Div([
-            html.H4("Performance Analyst", className="mb-3 text-primary"),
-            html.Div(f"Total Sales: ${total_sales:,.2f}", className="mb-3"),
+            html.H4("Performance Analyst"),
             dbc.Row([
                 dbc.Col(dcc.Graph(figure=store_perf), width=4),
                 dbc.Col(dcc.Graph(figure=revenue_user), width=4),
-                dbc.Col(dcc.Graph(figure=conversion), width=4),
+                dbc.Col(dcc.Graph(figure=conv), width=4),
             ])
         ])
 
-    # --- Product Insights ---
+    # Product insights
     elif pathname == "/product-insights":
-        total_sales = filtered_df["Revenue"].sum()
-        top_products = filtered_df.groupby("Product")["Revenue"].sum().reset_index().sort_values(by="Revenue", ascending=False)
+        top_products = df.groupby("Product")["Sales"].sum().reset_index().sort_values(by="Sales", ascending=False)
         np.random.seed(42)
-        target_series_products = np.random.uniform(3e7, 5e7, size=len(top_products))
+        target_series_products = np.random.uniform(0.5e6, 1e6, size=len(top_products))
         target_series_products_fluct = target_series_products * 0.05
         target_series_products += np.random.normal(0, target_series_products_fluct)
 
-        dates = pd.to_datetime(filtered_df.groupby("Date")["Revenue"].sum().reset_index()["Date"])
+        dates = pd.to_datetime(df.groupby("Date")["Revenue"].sum().reset_index()["Date"])
         n_points = len(dates)
-        target_bases = np.random.uniform(1e6, 2.5e6, n_points)
+        target_bases = np.random.uniform(1e4, 4e4, n_points)
         target_fluct = target_bases * 0.05
         target_series_time = target_bases + np.random.normal(0, target_fluct)
-        expenditure_bases = np.random.uniform(5e5, 2e6, n_points)
+        expenditure_bases = np.random.uniform(1e4, 4e4, n_points)
         expenditure_fluct = expenditure_bases * 0.05
         expenditure_series = expenditure_bases + np.random.normal(0, expenditure_fluct)
 
-        total_sales_time = pd.DataFrame({'Date': dates, 'Revenue': filtered_df.groupby("Date")["Revenue"].sum().values})
-        fig_total_sales_time = px.line(total_sales_time, x='Date', y='Revenue', title="Total Sales Over Time")
-        fig_total_sales_time.add_trace(go.Scatter(x=dates, y=total_sales_time['Revenue'], mode='lines', name='Actual'))
-        fig_total_sales_time.add_trace(go.Scatter(x=dates, y=target_series_time, mode='lines', name='Target'))
-        fig_total_sales_time.add_trace(go.Scatter(x=dates, y=expenditure_series, mode='lines', name='Expenditure'))
+        total_sales_time = pd.DataFrame({'Date': dates, 'Sales': df.groupby("Date")["Sales"].sum().values})
+        fig_time = px.line(total_sales_time, x='Date', y='Sales', title="Total Sales Over Time")
+        fig_time.add_trace(go.Scatter(x=dates, y=total_sales_time['Sales'], mode='lines', name='Actual'))
+        fig_time.add_trace(go.Scatter(x=dates, y=target_series_time, mode='lines', name='Target'))
+        fig_time.add_trace(go.Scatter(x=dates, y=expenditure_series, mode='lines', name='Expenditure'))
 
-        fig_top_products = px.bar(top_products, x="Product", y="Revenue", title="Top Selling Products")
-        fig_top_products.add_trace(go.Scatter(
-            x=top_products["Product"],
-            y=target_series_products,
-            mode='lines',
-            name='Targets',
-            line=dict(color='red', width=2)
+        fig_products = px.bar(top_products, x="Product", y="Sales")
+        # Add target line
+        fig_products.add_trace(go.Scatter(
+            x=top_products["Product"], y=target_series_products,
+            mode='lines', name='Targets', line=dict(color='red', width=2)
         ))
 
         return html.Div([
-            html.H4("Product Analyst", className="mb-3 text-primary"),
-            html.Div(f"Total Sales: ${total_sales:,.2f}", className="mb-3"),
+            html.H4("Product Insights"),
             dbc.Row([
-                dbc.Col(dcc.Graph(figure=fig_top_products), width=6),
-                dbc.Col(dcc.Graph(figure=fig_total_sales_time), width=6),
+                dbc.Col(dcc.Graph(figure=fig_products), width=6),
+                dbc.Col(dcc.Graph(figure=fig_time), width=6),
             ])
         ])
 
-    # --- Cluster Analysis ---
+    # Cluster analysis
     elif pathname == "/cluster-analysis":
         try:
-            # Prepare data
-            merge_df, scaled_features = prepare_clustering_data(filtered_df)
-
+            merge_df, scaled_features = prepare_clustering_data(df)
             n_clusters = 3
-
-            # Clustering
             try:
                 kmeans = KMeans(n_clusters=n_clusters, random_state=42)
                 labels = kmeans.fit_predict(scaled_features)
@@ -359,55 +364,29 @@ def render_tab_content(pathname, start_date, end_date):
                     "Davies-Bouldin": davies_bouldin_score(scaled_features, labels),
                     "Calinski-Harabasz": calinski_harabasz_score(scaled_features, labels)
                 }
-                # Assign cluster labels for visualization
                 merge_df['Cluster'] = labels.astype(str)
-                # Plot clusters in 2D (using first two features)
                 fig_scatter = px.scatter(
                     merge_df, x=scaled_features[:,0], y=scaled_features[:,1],
-                    color='Cluster',
-                    title='Cluster Scatter Plot'
+                    color='Cluster', title='Cluster Scatter Plot'
                 )
-            except Exception as e:
-                scores = {
-                    "Error": f"Clustering failed: {str(e)}"
-                }
+            except:
+                scores = {"Error": "Clustering failed"}
                 fig_scatter = go.Figure()
                 fig_scatter.update_layout(title="Clustering failed")
-        except Exception as e:
-            scores = {
-                "Error": f"Data preparation failed: {str(e)}"
-            }
+        except:
+            scores = {"Error": "Data preparation failed"}
             fig_scatter = go.Figure()
             fig_scatter.update_layout(title="Data preparation failed")
 
-        # Define cluster meanings
-        cluster_meanings = {
-            '0': 'Country-based sales clusters',
-            '1': 'Demo request trend',
-            '2': 'Salesperson performance'
-        }
-
-        def generate_score_html(scores):
-            if "Error" in scores:
-                return html.P(scores["Error"], style={'color': 'red'})
-            # Format scores horizontally
-            return html.Div([
-                html.Span(f"Silhouette Score: {scores['Silhouette']:.2f}  "),
-                html.Span(f"Davies-Bouldin Index: {scores['Davies-Bouldin']:.2f}  "),
-                html.Span(f"Calinski-Harabasz Score: {scores['Calinski-Harabasz']:.2f}")
-            ], style={'fontSize': '14px', 'color': '#333', 'whiteSpace': 'nowrap'})
-
-        # Add annotation inside the plot for cluster key
-        cluster_key_text = (
+        key_info = (
             "0 : Country-based sales clusters  "
             "1 : Demo request trend  "
             "2 : Salesperson performance"
         )
-        # Update layout to include cluster key as annotation
         fig_scatter.update_layout(
             annotations=[
                 dict(
-                    text=cluster_key_text,
+                    text=key_info,
                     x=0.5,
                     y=-0.2,
                     xref='paper',
@@ -421,21 +400,30 @@ def render_tab_content(pathname, start_date, end_date):
                     opacity=0.8
                 )
             ],
-            margin=dict(b=100)  # increase bottom margin for annotation
+            margin=dict(b=100)
         )
 
+        def generate_score_html(scores):
+            if "Error" in scores:
+                return html.P(scores["Error"], style={'color': 'red'})
+            return html.Div([
+                html.Span(f"Silhouette: {scores['Silhouette']:.2f}  "),
+                html.Span(f"Davies-Bouldin: {scores['Davies-Bouldin']:.2f}  "),
+                html.Span(f"Calinski-Harabasz: {scores['Calinski-Harabasz']:.2f}")
+            ], style={'fontSize': '14px', 'color': '#333', 'whiteSpace': 'nowrap'})
+
         return html.Div([
-            # Chart and performance scores
             html.Div([
                 dcc.Graph(figure=fig_scatter),
-                html.H6("Clustering Performance Scores"),
                 generate_score_html(scores)
             ], style={'display': 'flex', 'flexDirection': 'column', 'alignItems': 'center'})
         ])
+
     # Default fallback
     return html.H3("Page not found or no data.")
 
-# --- Search callback ---
+
+# Search callback
 @app.callback(
     Output('data-table', 'data'),
     [Input('search-btn', 'n_clicks')],
@@ -444,21 +432,20 @@ def render_tab_content(pathname, start_date, end_date):
 )
 def filter_table(n_clicks, search_value, search_column):
     if not search_value or search_value.strip() == "":
-        return df_full.sample(n=6, random_state=42).to_dict('records')
+        return df_full.sample(6, random_state=42).to_dict('records')
     filtered = df_full[df_full[search_column].astype(str).str.lower().str.contains(search_value.lower())]
     return filtered.to_dict('records') if not filtered.empty else []
 
-# --- Reset search on URL change ---
+# Reset search input
 @app.callback(
     Output('search-input', 'value'),
     [Input('url', 'pathname')],
     prevent_initial_call=True
 )
-def reset_search(n):
+def reset_search(_):
     return ""
 
-# --- PDF download ---
-from dash.exceptions import PreventUpdate
+# Download PDF callback
 @app.callback(
     Output("download-pdf", "data"),
     Input("download-btn", "n_clicks"),
@@ -466,64 +453,82 @@ from dash.exceptions import PreventUpdate
 )
 def generate_pdf(n_clicks):
     if not n_clicks:
-        raise PreventUpdate
-    figures = [
-        ("Top Selling Products", px.bar(
-            df_full.groupby("Product")["Revenue"].sum().reset_index(),
-            x="Product", y="Revenue")),
-        ("Total Sales Over Time", px.line(
-            df_full.groupby("Date")["Revenue"].sum().reset_index(),
-            x="Date", y="Revenue")),
-        ("Sales by Salesperson", px.bar(
-            df_full.groupby("Salesperson")["Revenue"].sum().reset_index(),
-            x="Salesperson", y="Revenue")),
-        ("Sales by Channel", px.pie(
-            df_full,
-            names="Sales Channel",
-            values="Revenue")),
-        ("Sales by Region", px.bar(
-            df_full.groupby("Country")["Revenue"].sum().reset_index(),
-            x="Country", y="Revenue")),
-        ("Retail Store Performance", px.bar(
-            df_full.groupby("Retail Store")["Revenue"].sum().reset_index(),
-            x="Retail Store", y="Revenue")),
-        ("Revenue per User", px.histogram(
-            df_full.groupby("Customer Name")["Revenue"].sum().reset_index(),
-            x="Revenue")),
-        ("Conversion Rate", go.Figure(go.Indicator(
-            mode="gauge+number",
-            value=56.56,
-            title={'text': "Conversion Rate (%)"},
-            gauge={'axis': {'range': [0, 100]}, 'bar': {'color': "#17BECF"}}
-        )))
-    ]
-    descriptions = [
-        "This bar chart shows revenue by product.",
-        "This line graph depicts total revenue trends over time.",
-        "This bar chart presents revenue contribution by each salesperson.",
-        "This pie chart shows revenue distribution across sales channels.",
-        "This bar chart highlights revenue by region (country).",
-        "Retail store performance in terms of total revenue is visualized here.",
-        "This histogram represents revenue per individual user.",
-        "This gauge chart shows the percentage of demo requests compared to total entries."
-    ]
+        raise dash.exceptions.PreventUpdate
+
+    import io
+    import os
+    import tempfile
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.utils import ImageReader
+
     with tempfile.TemporaryDirectory() as tmpdirname:
-        c = canvas.Canvas(os.path.join(tmpdirname, "report.pdf"), pagesize=letter)
+        pdf_path = os.path.join(tmpdirname, "dashboard_charts.pdf")
+        c = canvas.Canvas(pdf_path, pagesize=letter)
         width, height = letter
-        for idx, (title, fig) in enumerate(figures):
-            img_bytes = fig.to_image(format="png")
+
+        # List your charts here, matching your dashboard code
+        # Example: replace these with the actual figures you generate
+        figures = [
+            ("Sales by Region", px.bar(
+                df_full.groupby("Country")["Sales"].sum().reset_index(),
+                x="Country", y="Sales"
+            )),
+            ("Sales by Salesperson", px.bar(
+                df_full.groupby("Salesperson")["Sales"].sum().reset_index(),
+                x="Salesperson", y="Sales"
+            )),
+            ("Total Sales Over Time", px.line(
+                df_full.groupby("Date")["Sales"].sum().reset_index(),
+                x="Date", y="Sales"
+            )),
+            ("Top Products", px.bar(
+                df_full.groupby("Product")["Sales"].sum().reset_index().sort_values(by="Sales", ascending=False)
+            )),
+            ("Revenue per User", px.histogram(
+                df_full.groupby("Customer Name")["Sales"].sum().reset_index(),
+                x="Customer Name", y="Sales"
+            )),
+            ("Demo Requests & Conversion", go.Figure(
+                go.Indicator(
+                    mode="gauge+number",
+                    value=56.56,
+                    title={'text': "Demo Requests (%)"},
+                    gauge={'axis': {'range': [0, 100]}, 'bar': {'color': "#17BECF"}}
+                )
+            ))
+        ]
+
+        descriptions = [
+            "Revenue by Country",
+            "Sales by Salesperson",
+            "Total Sales Over Time",
+            "Top Selling Products",
+            "Revenue per Customer",
+            "Demo Request Conversion Rate"
+        ]
+
+        for i, (title, fig) in enumerate(figures):
+            # Convert plotly figure to image (png)
+            img_bytes = fig.to_image(format='png', width=800, height=600)
             image = ImageReader(io.BytesIO(img_bytes))
-            c.setFont("Helvetica-Bold", 12)
+            # Draw title and description
+            c.setFont("Helvetica-Bold", 14)
             c.drawString(50, height - 50, title)
             c.setFont("Helvetica", 10)
-            c.drawString(50, height - 65, descriptions[idx])
-            c.drawImage(image, 50, height - 420, width=500, height=300, preserveAspectRatio=True)
+            c.drawString(50, height - 70, descriptions[i])
+            # Draw the image
+            c.drawImage(image, 50, height - 650, width=500, height=300, preserveAspectRatio=True)
             c.showPage()
+
         c.save()
-        pdf_path = os.path.join(tmpdirname, "report.pdf")
-        with open(pdf_path, "rb") as f:
-            encoded_pdf = base64.b64encode(f.read()).decode()
-        return dcc.send_bytes(base64.b64decode(encoded_pdf), filename="Sales_Report.pdf")
+
+        # Read the PDF bytes
+        with open(pdf_path, 'rb') as f:
+            pdf_bytes = f.read()
+
+        return dash.dcc.send_bytes(lambda: pdf_bytes, filename="Dashboard_Charts.pdf")
+
 
 
 if __name__ == '__main__':
