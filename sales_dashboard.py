@@ -13,6 +13,127 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score, davies_bouldin_score, calinski_harabasz_score
 
+
+%pip install Faker
+
+import pandas as pd
+import numpy as np
+from faker import Faker
+import random
+
+# Initialize Faker
+fake = Faker()
+
+# Parameters
+num_records = 500000
+countries = ["UK", "USA", "Germany", "France", "Norway", "India", "Canada", "Japan", "Australia", "Brazil", "South Africa"]
+resources = ["/index.html", "/scheduledemo.php", "/prototype.php", "/event.php", "/images/events.jpg"]
+response_codes = [200, 404, 500, 304]
+request_types = ["GET", "POST"]
+sales_channels = ["Online", "Physical"]
+salespersons = ["Ben", "Abishola", "Constance", "Peter", "Emma"]
+retail_stores = ["Retail A", "Retail B", "Retail C", "Retail D"]
+customer_segments = ["Small Business", "Enterprise", "Individual", "Startup"]
+
+# Salesperson ID map
+salesperson_ids = {name: f"SP{str(i+1).zfill(3)}" for i, name in enumerate(salespersons)}
+
+# Country revenue multipliers
+country_revenue_multiplier = {
+    "UK": 1.1, "USA": 1.3, "Germany": 1.2, "France": 1.0, "Norway": 0.9,
+    "India": 0.8, "Canada": 1.05, "Japan": 1.15, "Australia": 1.1,
+    "Brazil": 0.85, "South Africa": 0.75
+}
+
+# Salesperson effectiveness factor
+salesperson_effectiveness = {
+    "Ben": 1.2,
+    "Abishola": 1.1,
+    "Constance": 1.3,
+    "Peter": 0.95,
+    "Emma": 1.05
+}
+
+# Product and industry setup
+all_products = set(p for plist in {
+    "Finance": ["AI Assistant Pro", "Market Forecaster", "Insight Analyzer"],
+    "Healthcare": ["Smart HR Helper", "AI Assistant Pro", "Experience Tracker"],
+    "Retail": ["Insight Analyzer", "Experience Tracker", "Rapid Proto Builder"],
+    "Technology": ["DevOps AI Companion", "Rapid Proto Builder", "AI Assistant Pro"],
+    "Education": ["Smart HR Helper", "Experience Tracker"],
+    "Manufacturing": ["Market Forecaster", "DevOps AI Companion"],
+    "Telecommunications": ["Insight Analyzer", "AI Assistant Pro"],
+    "Logistics": ["Market Forecaster", "DevOps AI Companion", "Insight Analyzer"]
+}.values() for p in plist)
+product_ids = {product: f"P{str(i+1).zfill(4)}" for i, product in enumerate(all_products)}
+industries_products = {
+    "Finance": ["AI Assistant Pro", "Market Forecaster", "Insight Analyzer"],
+    "Healthcare": ["Smart HR Helper", "AI Assistant Pro", "Experience Tracker"],
+    "Retail": ["Insight Analyzer", "Experience Tracker", "Rapid Proto Builder"],
+    "Technology": ["DevOps AI Companion", "Rapid Proto Builder", "AI Assistant Pro"],
+    "Education": ["Smart HR Helper", "Experience Tracker"],
+    "Manufacturing": ["Market Forecaster", "DevOps AI Companion"],
+    "Telecommunications": ["Insight Analyzer", "AI Assistant Pro"],
+    "Logistics": ["Market Forecaster", "DevOps AI Companion", "Insight Analyzer"]
+}
+industry_list = list(industries_products.keys())
+
+# Generate data
+data = []
+for _ in range(num_records):
+    timestamp = fake.date_time_this_year()
+    ip_address = fake.ipv4()
+    country = random.choice(countries)
+    request_type = random.choice(request_types)
+    resource = random.choice(resources)
+    response_code = random.choice(response_codes)
+    jobs_placed = np.random.randint(0, 10)
+    demo_requests = np.random.randint(0, 5)
+    ai_assistant_requests = np.random.randint(0, 3)
+    sales_channel = random.choice(sales_channels)
+    salesperson = random.choice(salespersons)
+    salesperson_id = salesperson_ids[salesperson]
+    retail_store = random.choice(retail_stores)
+
+    # Revenue based on country and salesperson effectiveness
+    base_revenue = np.random.randint(50, 1000)
+    multiplier = country_revenue_multiplier[country] * salesperson_effectiveness[salesperson]
+    revenue = int(base_revenue * multiplier)
+
+    industry = random.choice(industry_list)
+    product = random.choice(industries_products[industry])
+    product_id = product_ids[product]
+
+    customer_name = fake.company()
+    customer_id = f"CUST{fake.unique.random_int(1000, 999999)}"
+    customer_segment = random.choice(customer_segments)
+
+    # Estimate average price per unit between $20 and $100 depending on product
+    avg_price_per_unit = random.uniform(20, 100)
+    sales = max(1, int(revenue / avg_price_per_unit))  # At least 1 unit sold
+
+    data.append([
+        timestamp, ip_address, country, request_type, resource, response_code,
+        jobs_placed, demo_requests, ai_assistant_requests, sales_channel,
+        salesperson, salesperson_id, retail_store, revenue, sales,
+        product, product_id, industry, customer_name, customer_id, customer_segment
+    ])
+# Column headers
+columns = ["Timestamp", "IP Address", "Country", "Request Type", "Resource Requested", "Response Code",
+           "Jobs Placed", "Demo Requests", "AI Assistant Requests", "Sales Channel",
+           "Salesperson", "Salesperson ID", "Retail Store", "Revenue", "Sales", "Product", "Product ID", "Industry",
+           "Customer Name", "Customer ID", "Customer Segment"]
+
+# Create and save DataFrame
+df = pd.DataFrame(data, columns=columns)
+df.to_csv("web_logs_data1.csv", index=False)
+
+print("Dataset created and saved as 'web_logs_data.csv'")
+
+#Save processed dataset (optional)
+df.to_csv("web_logs_data1.csv", index=False)
+print("Data preparation completed. Cleaned dataset saved as web_logs_data1.")
+
 # Load your dataset
 df_full = pd.read_csv('web_logs_data1.csv')
 
