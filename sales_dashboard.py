@@ -11,7 +11,7 @@ import tempfile
 
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
-from sklearn.metrics import silhouette_score, davies_bouldin_score, calinski_harabasz_scor
+from sklearn.metrics import silhouette_score, davies_bouldin_score, calinski_harabasz_score
 
 import pandas as pd
 import numpy as np
