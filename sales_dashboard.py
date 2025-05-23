@@ -649,7 +649,7 @@ def generate_pdf(n_clicks):
 
 
 
-if __name__ == '__main__':
+#if __name__ == '__main__':
     # Don't run in debug mode
-    app.run(host='0.0.0.0', port=8051, debug=False)
+    #app.run(host='0.0.0.0', port=8000, debug=False)
 
