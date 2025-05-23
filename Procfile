@@ -1,1 +1,1 @@
-web: gunicorn sales_dashboard:app
+web: gunicorn --bind 0.0.0.0:$PORT sales_dashboard:app
